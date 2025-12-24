@@ -109,6 +109,9 @@
       uniform float u_scaleA;
       uniform float u_scaleB;
       uniform float u_scaleC;
+      uniform vec3 u_paramsA;
+      uniform vec3 u_paramsB;
+      uniform vec3 u_paramsC;
 
       #define PI 3.14159
       #define MAXDEPTH 7
@@ -140,15 +143,18 @@
         return min(max(d.x,d.y),0.0) + length(max(d,0.0));
       }
 
-      float left(vec2 pt)
+      float left(vec2 pt, vec3 params)
       {
-          mat3 posR = Rot(-(20.0/360.0)*2.0*PI);
-          mat3 negR = Rot(20.0/360.0*2.0*PI);
+          float angleMul = params.x;
+          float lenMul = params.y;
+          float windMul = params.z;
+          mat3 posR = Rot(-(20.0*angleMul/360.0)*2.0*PI);
+          mat3 negR = Rot(20.0*angleMul/360.0*2.0*PI);
 
           const int depth = 6;
           const int branches = 3; 
           int maxDepth = int(pow(float(branches), float(depth)));
-          float len = 1.7;
+          float len = 1.7 * lenMul;
           float wid = 0.01;
           pt = pt + vec2(0.0,2.0);
 
@@ -174,11 +180,11 @@
                 mx = posR*Disp(vec2(0.0,-2.0*l));
               }
               else if(path == 1){
-                mat3 wind = Rot(0.5*sin(u_time + 2.0));
+                mat3 wind = Rot(0.5*windMul*sin(u_time + 2.0));
                 mx = wind*posR * Disp(vec2(0.0,-4.0*l));
               }
               else if(path == 2){
-                mat3 wind = Rot(0.2*sin(u_time));
+                mat3 wind = Rot(0.2*windMul*sin(u_time));
                 mx = wind*negR * Disp(vec2(0.0,-4.0*l));
               }
 
@@ -195,15 +201,18 @@
          return min(d,trunk);
       }
 
-      float center(vec2 pt)
+      float center(vec2 pt, vec3 params)
       {
-          mat3 posR = Rot(-(25.7/360.0)*2.0*PI);
-          mat3 negR = Rot(25.7/360.0*2.0*PI);
+          float angleMul = params.x;
+          float lenMul = params.y;
+          float windMul = params.z;
+          mat3 posR = Rot(-(25.7*angleMul/360.0)*2.0*PI);
+          mat3 negR = Rot(25.7*angleMul/360.0*2.0*PI);
 
           const int depth = 7;
           const int branches = 3; 
           int maxDepth = int(pow(float(branches), float(depth)));
-          float len = 1.7;
+          float len = 1.7 * lenMul;
           float wid = 0.01;
           pt = pt + vec2(0.0,2.0);
 
@@ -227,11 +236,11 @@
                 mx = posR*Disp(vec2(0.0,-2.0*l));
               }
               else if(path == 1){
-                mat3 wind = Rot(0.2*sin(u_time+6.2));
+                mat3 wind = Rot(0.2*windMul*sin(u_time+6.2));
                 mx = wind*negR*Disp(vec2(0.0,-2.0*l));
               }
               else if(path == 2){
-                mat3 wind = Rot(0.2*sin(u_time+1.0));
+                mat3 wind = Rot(0.2*windMul*sin(u_time+1.0));
                 mx = wind*Disp(vec2(0.0,-4.0*l)) ;
               }
 
@@ -258,15 +267,18 @@
           return min(t1, t2);
       }
 
-      float right(vec2 pt)
+      float right(vec2 pt, vec3 params)
       {
-          mat3 posR = Rot(-(22.5/360.0)*2.0*PI);
-          mat3 negR = Rot(22.5/360.0*2.0*PI);
+          float angleMul = params.x;
+          float lenMul = params.y;
+          float windMul = params.z;
+          mat3 posR = Rot(-(22.5*angleMul/360.0)*2.0*PI);
+          mat3 negR = Rot(22.5*angleMul/360.0*2.0*PI);
 
           const int depth = 4;
           const int branches = 4; 
           int maxDepth = int(pow(float(branches), float(depth)));
-          float len = 1.3;
+          float len = 1.3 * lenMul;
           float wid = 0.01;
           pt = pt + vec2(0.0,2.0);
 
@@ -291,7 +303,7 @@
                 mx = negR*Disp(vec2(0.0,-2.0*l));
               }
               else if(path == 1){
-                mat3 wind = Rot(0.6*sin(u_time/2.0));
+                mat3 wind = Rot(0.6*windMul*sin(u_time/2.0));
                 mx = wind*negR*Disp(vec2(0.0,-4.0*l));
               }
               else if(path == 2){
@@ -319,9 +331,9 @@
           vec2 uvb = uv * u_scaleB + u_offsetB;
           vec2 uvc = uv * u_scaleC + u_offsetC;
 
-          float l = left(uva - vec2(-5.0,0.0));
-          float c = center(uvb);
-          float r = right(uvc - vec2(5.0,0.0));
+          float l = left(uva - vec2(-5.0,0.0), u_paramsA);
+          float c = center(uvb, u_paramsB);
+          float r = right(uvc - vec2(5.0,0.0), u_paramsC);
           float d = min(r, min(l, c));
           float t = clamp(d, 0.0, 0.04) * 2.0*12.5;
           return 1.0 - t;
@@ -398,6 +410,9 @@
     const scaleALoc = gl.getUniformLocation(program, 'u_scaleA');
     const scaleBLoc = gl.getUniformLocation(program, 'u_scaleB');
     const scaleCLoc = gl.getUniformLocation(program, 'u_scaleC');
+    const paramsALoc = gl.getUniformLocation(program, 'u_paramsA');
+    const paramsBLoc = gl.getUniformLocation(program, 'u_paramsB');
+    const paramsCLoc = gl.getUniformLocation(program, 'u_paramsC');
 
     const quad = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, quad);
@@ -426,7 +441,10 @@
       offsetC: [0, 0],
       scaleA: 1,
       scaleB: 1,
-      scaleC: 1
+      scaleC: 1,
+      paramsA: [1, 1, 1],
+      paramsB: [1, 1, 1],
+      paramsC: [1, 1, 1]
     };
 
     function randomizeTrees() {
@@ -434,6 +452,12 @@
       const jitterY = 0.6;
       const scaleMin = 0.85;
       const scaleMax = 1.12;
+      const angleMin = 0.85;
+      const angleMax = 1.2;
+      const lenMin = 0.85;
+      const lenMax = 1.15;
+      const windMin = 0.7;
+      const windMax = 1.3;
 
       treeParams.offsetA = [(Math.random() * 2 - 1) * jitterX, (Math.random() * 2 - 1) * jitterY];
       treeParams.offsetB = [(Math.random() * 2 - 1) * jitterX, (Math.random() * 2 - 1) * jitterY];
@@ -441,6 +465,21 @@
       treeParams.scaleA = scaleMin + Math.random() * (scaleMax - scaleMin);
       treeParams.scaleB = scaleMin + Math.random() * (scaleMax - scaleMin);
       treeParams.scaleC = scaleMin + Math.random() * (scaleMax - scaleMin);
+      treeParams.paramsA = [
+        angleMin + Math.random() * (angleMax - angleMin),
+        lenMin + Math.random() * (lenMax - lenMin),
+        windMin + Math.random() * (windMax - windMin)
+      ];
+      treeParams.paramsB = [
+        angleMin + Math.random() * (angleMax - angleMin),
+        lenMin + Math.random() * (lenMax - lenMin),
+        windMin + Math.random() * (windMax - windMin)
+      ];
+      treeParams.paramsC = [
+        angleMin + Math.random() * (angleMax - angleMin),
+        lenMin + Math.random() * (lenMax - lenMin),
+        windMin + Math.random() * (windMax - windMin)
+      ];
     }
 
     function render(timeMs) {
@@ -456,6 +495,9 @@
       gl.uniform1f(scaleALoc, treeParams.scaleA);
       gl.uniform1f(scaleBLoc, treeParams.scaleB);
       gl.uniform1f(scaleCLoc, treeParams.scaleC);
+      gl.uniform3f(paramsALoc, treeParams.paramsA[0], treeParams.paramsA[1], treeParams.paramsA[2]);
+      gl.uniform3f(paramsBLoc, treeParams.paramsB[0], treeParams.paramsB[1], treeParams.paramsB[2]);
+      gl.uniform3f(paramsCLoc, treeParams.paramsC[0], treeParams.paramsC[1], treeParams.paramsC[2]);
       gl.drawArrays(gl.TRIANGLES, 0, 6);
       requestAnimationFrame(render);
     }
