@@ -361,7 +361,8 @@
           if (u_pass < 0.5) {
             float trail = treeMask(uv + offset);
             float shift = 6.0 + 2.0 * sin(u_time * 0.25);
-            vec2 baseUv = (fragCoord.xy + vec2(shift, 0.0)) / u_resolution.xy;
+            float vDrift = 1.5 * sin(u_time * 0.35 + fragCoord.x * 0.002);
+            vec2 baseUv = (fragCoord.xy + vec2(shift, vDrift)) / u_resolution.xy;
             float prev = texture2D(u_trail, baseUv).r;
             float prevBlur = texture2D(u_trail, baseUv + vec2(1.0 / u_resolution.x, 0.0)).r;
             prev = 0.6 * prev + 0.4 * prevBlur;
