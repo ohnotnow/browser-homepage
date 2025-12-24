@@ -112,6 +112,9 @@
       uniform vec3 u_paramsA;
       uniform vec3 u_paramsB;
       uniform vec3 u_paramsC;
+      uniform sampler2D u_trail;
+      uniform float u_pass;
+      uniform float u_decay;
 
       #define PI 3.14159
       #define MAXDEPTH 7
@@ -353,15 +356,25 @@
           float glitch = step(0.985, fract(sin(u_time * 0.7) * 43758.5453));
           uv.x += (0.08 + 0.06 * sin(u_time * 3.0)) * glitch * band;
 
+          vec2 offset = vec2(0.16, 0.0);
+
+          if (u_pass < 0.5) {
+            float trail = treeMask(uv + offset);
+            float shift = 1.25 + 0.75 * sin(u_time * 0.25);
+            vec2 prevUv = (fragCoord.xy + vec2(shift, 0.0)) / u_resolution.xy;
+            float prev = texture2D(u_trail, prevUv).r;
+            float nextTrail = max(trail, prev * u_decay);
+            fragColor = vec4(nextTrail, 0.0, 0.0, 1.0);
+            return;
+          }
+
           vec3 bg = vec3(0.0);
           vec3 fg = vec3(0.74, 0.82, 0.74);
           vec3 accent = vec3(0.82, 0.32, 0.36);
 
           float mask = treeMask(uv);
-
-          // Subtle chromatic offset for a muted 3D-glasses effect.
-          vec2 offset = vec2(0.16, 0.0);
-          float trail = treeMask(uv + offset);
+          float trail = texture2D(u_trail, fragCoord.xy / u_resolution.xy).r;
+          float trailGlow = smoothstep(0.0, 1.0, trail) * 0.22;
 
           // Faint reflection in the lower third.
           vec2 reflUv = uv;
@@ -369,7 +382,7 @@
           float refl = treeMask(reflUv) * smoothstep(-0.2, -1.0, uv.y) * 0.18;
 
           vec3 color = mix(bg, fg, mask * 0.8);
-          color += accent * trail * 0.6;
+          color += accent * (trail * 0.42 + trailGlow);
           color += fg * refl;
 
           fragColor = vec4(color, 1.0);
@@ -420,6 +433,9 @@
     const paramsALoc = gl.getUniformLocation(program, 'u_paramsA');
     const paramsBLoc = gl.getUniformLocation(program, 'u_paramsB');
     const paramsCLoc = gl.getUniformLocation(program, 'u_paramsC');
+    const trailLoc = gl.getUniformLocation(program, 'u_trail');
+    const passLoc = gl.getUniformLocation(program, 'u_pass');
+    const decayLoc = gl.getUniformLocation(program, 'u_decay');
 
     const quad = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, quad);
@@ -440,6 +456,60 @@
       canvas.width = window.innerWidth;
       canvas.height = window.innerHeight;
       gl.viewport(0, 0, canvas.width, canvas.height);
+      resizeTrailTargets();
+    }
+
+    const trailScale = 0.4;
+    const trailDecay = 0.95;
+    let trailTargets = [];
+    let trailIndex = 0;
+
+    function createTrailTarget(width, height) {
+      const texture = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, texture);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texImage2D(
+        gl.TEXTURE_2D,
+        0,
+        gl.RGBA,
+        width,
+        height,
+        0,
+        gl.RGBA,
+        gl.UNSIGNED_BYTE,
+        null
+      );
+
+      const framebuffer = gl.createFramebuffer();
+      gl.bindFramebuffer(gl.FRAMEBUFFER, framebuffer);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, texture, 0);
+
+      return { texture, framebuffer, width, height };
+    }
+
+    function resizeTrailTargets() {
+      const width = Math.max(1, Math.floor(canvas.width * trailScale));
+      const height = Math.max(1, Math.floor(canvas.height * trailScale));
+
+      trailTargets.forEach((target) => {
+        gl.deleteTexture(target.texture);
+        gl.deleteFramebuffer(target.framebuffer);
+      });
+
+      trailTargets = [createTrailTarget(width, height), createTrailTarget(width, height)];
+      trailIndex = 0;
+
+      trailTargets.forEach((target) => {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, target.framebuffer);
+        gl.viewport(0, 0, target.width, target.height);
+        gl.clearColor(0.0, 0.0, 0.0, 1.0);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+      });
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     }
 
     const treeParams = {
@@ -490,12 +560,15 @@
     }
 
     function render(timeMs) {
+      const time = timeMs * 0.001;
+      const readTarget = trailTargets[trailIndex];
+      const writeTarget = trailTargets[1 - trailIndex];
+
       gl.useProgram(program);
       gl.bindBuffer(gl.ARRAY_BUFFER, quad);
       gl.enableVertexAttribArray(positionLoc);
       gl.vertexAttribPointer(positionLoc, 2, gl.FLOAT, false, 0, 0);
-      gl.uniform2f(resolutionLoc, canvas.width, canvas.height);
-      gl.uniform1f(timeLoc, timeMs * 0.001);
+      gl.uniform1f(timeLoc, time);
       gl.uniform2f(offsetALoc, treeParams.offsetA[0], treeParams.offsetA[1]);
       gl.uniform2f(offsetBLoc, treeParams.offsetB[0], treeParams.offsetB[1]);
       gl.uniform2f(offsetCLoc, treeParams.offsetC[0], treeParams.offsetC[1]);
@@ -505,7 +578,26 @@
       gl.uniform3f(paramsALoc, treeParams.paramsA[0], treeParams.paramsA[1], treeParams.paramsA[2]);
       gl.uniform3f(paramsBLoc, treeParams.paramsB[0], treeParams.paramsB[1], treeParams.paramsB[2]);
       gl.uniform3f(paramsCLoc, treeParams.paramsC[0], treeParams.paramsC[1], treeParams.paramsC[2]);
+
+      gl.activeTexture(gl.TEXTURE0);
+      gl.uniform1i(trailLoc, 0);
+      gl.uniform1f(decayLoc, trailDecay);
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, writeTarget.framebuffer);
+      gl.viewport(0, 0, writeTarget.width, writeTarget.height);
+      gl.uniform2f(resolutionLoc, writeTarget.width, writeTarget.height);
+      gl.uniform1f(passLoc, 0.0);
+      gl.bindTexture(gl.TEXTURE_2D, readTarget.texture);
       gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.viewport(0, 0, canvas.width, canvas.height);
+      gl.uniform2f(resolutionLoc, canvas.width, canvas.height);
+      gl.uniform1f(passLoc, 1.0);
+      gl.bindTexture(gl.TEXTURE_2D, writeTarget.texture);
+      gl.drawArrays(gl.TRIANGLES, 0, 6);
+
+      trailIndex = 1 - trailIndex;
       requestAnimationFrame(render);
     }
 
