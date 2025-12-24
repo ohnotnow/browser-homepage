@@ -86,8 +86,11 @@
     const ctx = canvas.getContext('2d');
 
     let width, height;
+    let simWidth, simHeight;
     let gridA, gridB, nextA, nextB;
     let imageData;
+    let simCanvas, simCtx;
+    let simScale = 1;
     let params = {
       feed: 0.055,
       kill: 0.062,
@@ -96,6 +99,19 @@
       dt: 1.0
     };
     let time = 0;
+    let lastSeedTime = 0;
+    let lastResetTime = 0;
+    let paletteIndex = 0;
+    const targetResolution = 360;
+    const stepsPerFrame = 12;
+    const seedIntervalMs = 5000;
+    const resetIntervalMs = 60000;
+    const palettes = [
+      { low: [12, 18, 24], high: [78, 122, 145] },
+      { low: [16, 16, 28], high: [118, 92, 140] },
+      { low: [10, 22, 18], high: [88, 132, 110] },
+      { low: [18, 14, 10], high: [140, 104, 72] }
+    ];
 
     function resize() {
       width = canvas.width = window.innerWidth;
@@ -104,21 +120,29 @@
     }
 
     function initGrid() {
-      const size = width * height;
+      simScale = Math.max(width, height) / targetResolution;
+      simScale = Math.max(1, simScale);
+      simWidth = Math.max(2, Math.floor(width / simScale));
+      simHeight = Math.max(2, Math.floor(height / simScale));
+      const size = simWidth * simHeight;
       gridA = new Float32Array(size);
       gridB = new Float32Array(size);
       nextA = new Float32Array(size);
       nextB = new Float32Array(size);
-      imageData = ctx.createImageData(width, height);
+      simCanvas = document.createElement('canvas');
+      simCanvas.width = simWidth;
+      simCanvas.height = simHeight;
+      simCtx = simCanvas.getContext('2d');
+      imageData = simCtx.createImageData(simWidth, simHeight);
 
       for (let i = 0; i < size; i++) {
         gridA[i] = 1.0;
         gridB[i] = 0.0;
       }
 
-      const cx = Math.floor(width / 2);
-      const cy = Math.floor(height / 2);
-      const r = Math.floor(Math.min(width, height) * 0.08);
+      const cx = Math.floor(simWidth / 2);
+      const cy = Math.floor(simHeight / 2);
+      const r = Math.floor(Math.min(simWidth, simHeight) * 0.08);
 
       for (let y = cy - r; y < cy + r; y++) {
         for (let x = cx - r; x < cx + r; x++) {
@@ -133,11 +157,14 @@
         autoSeed();
         autoSeed();
       }, 100);
+
+      lastSeedTime = performance.now();
+      lastResetTime = lastSeedTime;
     }
 
     function laplacian(idx, grid) {
       let sum = 0;
-      const w = width;
+      const w = simWidth;
 
       sum += grid[idx] * -1;
       sum += grid[idx - 1] * 0.2;
@@ -153,9 +180,9 @@
     }
 
     function update() {
-      for (let y = 1; y < height - 1; y++) {
-        for (let x = 1; x < width - 1; x++) {
-          const idx = y * width + x;
+      for (let y = 1; y < simHeight - 1; y++) {
+        for (let x = 1; x < simWidth - 1; x++) {
+          const idx = y * simWidth + x;
           const a = gridA[idx];
           const b = gridB[idx];
           const lapA = laplacian(idx, gridA);
@@ -177,12 +204,14 @@
     }
 
     function seed(x, y, r) {
+      const ix = Math.floor(x);
+      const iy = Math.floor(y);
       for (let dy = -r; dy <= r; dy++) {
         for (let dx = -r; dx <= r; dx++) {
-          const px = x + dx;
-          const py = y + dy;
-          if (px >= 0 && px < width && py >= 0 && py < height) {
-            const idx = py * width + px;
+          const px = ix + dx;
+          const py = iy + dy;
+          if (px >= 0 && px < simWidth && py >= 0 && py < simHeight) {
+            const idx = py * simWidth + px;
             if (Math.random() < 0.5) {
               gridB[idx] = 1.0;
             }
@@ -192,10 +221,30 @@
     }
 
     function autoSeed() {
-      const x = Math.random() * width;
-      const y = Math.random() * height;
-      const r = Math.floor(10 + Math.random() * 15);
+      const x = Math.random() * simWidth;
+      const y = Math.random() * simHeight;
+      const r = Math.floor(6 + Math.random() * 12);
       seed(x, y, r);
+    }
+
+    function clearGrid() {
+      for (let i = 0; i < gridA.length; i++) {
+        gridA[i] = 1.0;
+        gridB[i] = 0.0;
+      }
+    }
+
+    function nextPalette() {
+      paletteIndex = (paletteIndex + 1) % palettes.length;
+    }
+
+    function colorFromPalette(val) {
+      const p = palettes[paletteIndex];
+      const t = Math.max(0, Math.min(1, val));
+      const r = Math.floor(p.low[0] + (p.high[0] - p.low[0]) * t);
+      const g = Math.floor(p.low[1] + (p.high[1] - p.low[1]) * t);
+      const b = Math.floor(p.low[2] + (p.high[2] - p.low[2]) * t);
+      return [r, g, b];
     }
 
     function draw() {
@@ -206,22 +255,37 @@
         const b = gridB[i];
         const c = Math.floor((a - b) * 255);
         const val = Math.max(0, Math.min(255, c));
+        const t = val / 255;
+        const [r, g, bcol] = colorFromPalette(t);
 
         const idx = i * 4;
-        data[idx] = val * 0.2;
-        data[idx + 1] = val * 0.5;
-        data[idx + 2] = val * 0.8;
+        data[idx] = r;
+        data[idx + 1] = g;
+        data[idx + 2] = bcol;
         data[idx + 3] = 255;
       }
 
-      ctx.putImageData(imageData, 0, 0);
+      simCtx.putImageData(imageData, 0, 0);
+      ctx.imageSmoothingEnabled = false;
+      ctx.clearRect(0, 0, width, height);
+      ctx.drawImage(simCanvas, 0, 0, width, height);
 
-      for (let i = 0; i < 20; i++) {
+      for (let i = 0; i < stepsPerFrame; i++) {
         update();
       }
 
-      if (time % 300 === 0) {
+      const now = performance.now();
+      if (now - lastSeedTime >= seedIntervalMs) {
         autoSeed();
+        lastSeedTime = now;
+      }
+
+      if (now - lastResetTime >= resetIntervalMs) {
+        clearGrid();
+        autoSeed();
+        autoSeed();
+        nextPalette();
+        lastResetTime = now;
       }
 
       time++;
@@ -229,7 +293,9 @@
     }
 
     canvas.addEventListener('click', (e) => {
-      seed(e.clientX, e.clientY, 15);
+      const x = Math.floor(e.clientX / simScale);
+      const y = Math.floor(e.clientY / simScale);
+      seed(x, y, 10);
     });
 
     window.addEventListener('resize', resize);
