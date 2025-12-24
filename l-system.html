@@ -103,6 +103,12 @@
       precision highp float;
       uniform vec2 u_resolution;
       uniform float u_time;
+      uniform vec2 u_offsetA;
+      uniform vec2 u_offsetB;
+      uniform vec2 u_offsetC;
+      uniform float u_scaleA;
+      uniform float u_scaleB;
+      uniform float u_scaleC;
 
       #define PI 3.14159
       #define MAXDEPTH 7
@@ -309,10 +315,14 @@
       }
 
       float treeMask(vec2 uv) {
-          float l = left(uv - vec2(-5.0,0.0));
-          float c = center(uv);
-          float r = right(uv - vec2(5.0,0.0));
-          float d = min(r,min(l, c));
+          vec2 uva = uv * u_scaleA + u_offsetA;
+          vec2 uvb = uv * u_scaleB + u_offsetB;
+          vec2 uvc = uv * u_scaleC + u_offsetC;
+
+          float l = left(uva - vec2(-5.0,0.0));
+          float c = center(uvb);
+          float r = right(uvc - vec2(5.0,0.0));
+          float d = min(r, min(l, c));
           float t = clamp(d, 0.0, 0.04) * 2.0*12.5;
           return 1.0 - t;
       }
@@ -382,6 +392,12 @@
     const positionLoc = gl.getAttribLocation(program, 'a_pos');
     const resolutionLoc = gl.getUniformLocation(program, 'u_resolution');
     const timeLoc = gl.getUniformLocation(program, 'u_time');
+    const offsetALoc = gl.getUniformLocation(program, 'u_offsetA');
+    const offsetBLoc = gl.getUniformLocation(program, 'u_offsetB');
+    const offsetCLoc = gl.getUniformLocation(program, 'u_offsetC');
+    const scaleALoc = gl.getUniformLocation(program, 'u_scaleA');
+    const scaleBLoc = gl.getUniformLocation(program, 'u_scaleB');
+    const scaleCLoc = gl.getUniformLocation(program, 'u_scaleC');
 
     const quad = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, quad);
@@ -404,6 +420,29 @@
       gl.viewport(0, 0, canvas.width, canvas.height);
     }
 
+    const treeParams = {
+      offsetA: [0, 0],
+      offsetB: [0, 0],
+      offsetC: [0, 0],
+      scaleA: 1,
+      scaleB: 1,
+      scaleC: 1
+    };
+
+    function randomizeTrees() {
+      const jitterX = 1.4;
+      const jitterY = 0.6;
+      const scaleMin = 0.85;
+      const scaleMax = 1.12;
+
+      treeParams.offsetA = [(Math.random() * 2 - 1) * jitterX, (Math.random() * 2 - 1) * jitterY];
+      treeParams.offsetB = [(Math.random() * 2 - 1) * jitterX, (Math.random() * 2 - 1) * jitterY];
+      treeParams.offsetC = [(Math.random() * 2 - 1) * jitterX, (Math.random() * 2 - 1) * jitterY];
+      treeParams.scaleA = scaleMin + Math.random() * (scaleMax - scaleMin);
+      treeParams.scaleB = scaleMin + Math.random() * (scaleMax - scaleMin);
+      treeParams.scaleC = scaleMin + Math.random() * (scaleMax - scaleMin);
+    }
+
     function render(timeMs) {
       gl.useProgram(program);
       gl.bindBuffer(gl.ARRAY_BUFFER, quad);
@@ -411,12 +450,20 @@
       gl.vertexAttribPointer(positionLoc, 2, gl.FLOAT, false, 0, 0);
       gl.uniform2f(resolutionLoc, canvas.width, canvas.height);
       gl.uniform1f(timeLoc, timeMs * 0.001);
+      gl.uniform2f(offsetALoc, treeParams.offsetA[0], treeParams.offsetA[1]);
+      gl.uniform2f(offsetBLoc, treeParams.offsetB[0], treeParams.offsetB[1]);
+      gl.uniform2f(offsetCLoc, treeParams.offsetC[0], treeParams.offsetC[1]);
+      gl.uniform1f(scaleALoc, treeParams.scaleA);
+      gl.uniform1f(scaleBLoc, treeParams.scaleB);
+      gl.uniform1f(scaleCLoc, treeParams.scaleC);
       gl.drawArrays(gl.TRIANGLES, 0, 6);
       requestAnimationFrame(render);
     }
 
     window.addEventListener('resize', resize);
     resize();
+    randomizeTrees();
+    setInterval(randomizeTrees, 60000);
     requestAnimationFrame(render);
   </script>
 </body>
