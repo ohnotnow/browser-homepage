@@ -331,7 +331,7 @@
           float mask = treeMask(uv);
 
           // Subtle chromatic offset for a muted 3D-glasses effect.
-          vec2 offset = vec2(0.12, 0.0);
+          vec2 offset = vec2(0.16, 0.0);
           float trail = treeMask(uv + offset);
 
           // Faint reflection in the lower third.
@@ -340,7 +340,7 @@
           float refl = treeMask(reflUv) * smoothstep(-0.2, -1.0, uv.y) * 0.18;
 
           vec3 color = mix(bg, fg, mask * 0.8);
-          color += accent * trail * 0.35;
+          color += accent * trail * 0.6;
           color += fg * refl;
 
           fragColor = vec4(color, 1.0);
