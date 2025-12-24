@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Wave Ripples</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background: #0a0a0a;
+      overflow: hidden;
+      height: 100vh;
+    }
+
+    canvas {
+      display: block;
+      border-radius: 20px;
+    }
+
+    .scanlines {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      background: repeating-linear-gradient(
+        0deg,
+        rgba(0, 0, 0, 0.15) 0px,
+        rgba(0, 0, 0, 0.15) 1px,
+        transparent 1px,
+        transparent 3px
+      );
+      z-index: 10;
+    }
+
+    .vignette {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      background: radial-gradient(
+        ellipse at center,
+        transparent 0%,
+        transparent 50%,
+        rgba(0, 0, 0, 0.4) 100%
+      );
+      z-index: 11;
+    }
+
+    .crt {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 12;
+      animation: flicker 0.15s infinite;
+      opacity: 0.03;
+      background: white;
+    }
+
+    @keyframes flicker {
+      0% { opacity: 0.003; }
+      50% { opacity: 0.008; }
+      100% { opacity: 0.003; }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <div class="scanlines"></div>
+  <div class="vignette"></div>
+  <div class="crt"></div>
+
+  <script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+
+    let width, height;
+    let particles = [];
+    const particleCount = 600;
+    let waves = [];
+    let time = 0;
+
+    class Wave {
+      constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.radius = 0;
+        this.maxRadius = Math.max(width, height) * 0.8;
+        this.speed = 2 + Math.random() * 2;
+        this.strength = 1;
+        this.frequency = 0.05 + Math.random() * 0.02;
+        this.amplitude = 0.5 + Math.random() * 0.5;
+        this.phase = Math.random() * Math.PI * 2;
+      }
+
+      update() {
+        this.radius += this.speed;
+        this.strength = Math.max(0, 1 - (this.radius / this.maxRadius));
+        this.phase += 0.02;
+      }
+
+      getAmplitude(x, y) {
+        const dx = x - this.x;
+        const dy = y - this.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        if (dist > this.radius - 20 && dist < this.radius + 40) {
+          const wavePhase = (dist - this.radius) * this.frequency + this.phase;
+          return Math.sin(wavePhase) * this.strength * this.amplitude;
+        }
+        return 0;
+      }
+    }
+
+    class Particle {
+      constructor() {
+        this.reset();
+      }
+
+      reset() {
+        this.x = Math.random() * width;
+        this.y = Math.random() * height;
+        this.baseX = this.x;
+        this.baseY = this.y;
+        this.vx = 0;
+        this.vy = 0;
+        this.friction = 0.95;
+        this.returnForce = 0.02;
+        this.hue = 180 + Math.random() * 40;
+      }
+
+      update() {
+        let fx = 0;
+        let fy = 0;
+
+        for (const wave of waves) {
+          const amp = wave.getAmplitude(this.x, this.y);
+          const dx = this.x - wave.x;
+          const dy = this.y - wave.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist > 0) {
+            fx += (dx / dist) * amp * 8;
+            fy += (dy / dist) * amp * 8;
+          }
+        }
+
+        this.vx += fx;
+        this.vy += fy;
+
+        const dx = this.baseX - this.x;
+        const dy = this.baseY - this.y;
+        this.vx += dx * this.returnForce;
+        this.vy += dy * this.returnForce;
+
+        this.vx *= this.friction;
+        this.vy *= this.friction;
+
+        this.x += this.vx;
+        this.y += this.vy;
+      }
+
+      draw() {
+        const speed = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
+        const brightness = 40 + speed * 20;
+        const alpha = 0.3 + Math.min(speed * 0.1, 0.4);
+
+        ctx.shadowBlur = 6;
+        ctx.shadowColor = `hsla(${this.hue}, 80%, 50%, 0.4)`;
+
+        ctx.strokeStyle = `hsla(${this.hue}, 70%, ${brightness}%, ${alpha})`;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(this.x - this.vx * 2, this.y - this.vy * 2);
+        ctx.lineTo(this.x, this.y);
+        ctx.stroke();
+      }
+    }
+
+    function resize() {
+      width = canvas.width = window.innerWidth;
+      height = canvas.height = window.innerHeight;
+      initParticles();
+    }
+
+    function initParticles() {
+      particles = [];
+      for (let i = 0; i < particleCount; i++) {
+        particles.push(new Particle());
+      }
+    }
+
+    function spawnWave(x, y) {
+      waves.push(new Wave(x, y));
+      if (waves.length > 8) {
+        waves.shift();
+      }
+    }
+
+    function draw() {
+      ctx.fillStyle = 'rgba(10, 10, 10, 0.08)';
+      ctx.fillRect(0, 0, width, height);
+
+      for (let i = waves.length - 1; i >= 0; i--) {
+        waves[i].update();
+        if (waves[i].strength <= 0) {
+          waves.splice(i, 1);
+        }
+      }
+
+      for (const particle of particles) {
+        particle.update();
+        particle.draw();
+      }
+
+      ctx.shadowBlur = 0;
+      time++;
+      requestAnimationFrame(draw);
+    }
+
+    canvas.addEventListener('click', (e) => {
+      spawnWave(e.clientX, e.clientY);
+      setTimeout(() => spawnWave(e.clientX, e.clientY), 200);
+      setTimeout(() => spawnWave(e.clientX, e.clientY), 400);
+    });
+
+    canvas.addEventListener('mousemove', (e) => {
+      if (Math.random() < 0.02) {
+        spawnWave(e.clientX, e.clientY);
+      }
+    });
+
+    window.addEventListener('resize', resize);
+    resize();
+    draw();
+  </script>
+</body>
+</html>

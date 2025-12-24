@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fireflies</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background: #0a0a0a;
+      overflow: hidden;
+      height: 100vh;
+    }
+
+    canvas {
+      display: block;
+      border-radius: 20px;
+    }
+
+    .scanlines {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      background: repeating-linear-gradient(
+        0deg,
+        rgba(0, 0, 0, 0.15) 0px,
+        rgba(0, 0, 0, 0.15) 1px,
+        transparent 1px,
+        transparent 3px
+      );
+      z-index: 10;
+    }
+
+    .vignette {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      background: radial-gradient(
+        ellipse at center,
+        transparent 0%,
+        transparent 50%,
+        rgba(0, 0, 0, 0.4) 100%
+      );
+      z-index: 11;
+    }
+
+    .crt {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 12;
+      animation: flicker 0.15s infinite;
+      opacity: 0.03;
+      background: white;
+    }
+
+    @keyframes flicker {
+      0% { opacity: 0.003; }
+      50% { opacity: 0.008; }
+      100% { opacity: 0.003; }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <div class="scanlines"></div>
+  <div class="vignette"></div>
+  <div class="crt"></div>
+
+  <script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+
+    let width, height;
+    let fireflies = [];
+    const fireflyCount = 80;
+    const coupling = 0.015;
+    const neighborDist = 150;
+
+    class Firefly {
+      constructor() {
+        this.x = Math.random() * width;
+        this.y = Math.random() * height;
+        this.vx = (Math.random() - 0.5) * 0.5;
+        this.vy = (Math.random() - 0.5) * 0.5;
+        this.phase = Math.random() * Math.PI * 2;
+        this.naturalFreq = 0.03 + Math.random() * 0.01;
+        this.brightness = 0;
+        this.hue = 50 + Math.random() * 20;
+      }
+
+      update() {
+        this.phase += this.naturalFreq;
+        this.brightness = (Math.sin(this.phase) + 1) * 0.5;
+        this.brightness = Math.pow(this.brightness, 2);
+
+        this.x += this.vx;
+        this.y += this.vy;
+
+        if (this.x < 0 || this.x > width) this.vx *= -1;
+        if (this.y < 0 || this.y > height) this.vy *= -1;
+
+        this.x = Math.max(0, Math.min(width, this.x));
+        this.y = Math.max(0, Math.min(height, this.y));
+      }
+
+      sync(others) {
+        let phaseSum = 0;
+        let count = 0;
+
+        for (const other of others) {
+          if (other === this) continue;
+          const dx = other.x - this.x;
+          const dy = other.y - this.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist < neighborDist) {
+            const phaseDiff = other.phase - this.phase;
+            const wrappedDiff = Math.atan2(Math.sin(phaseDiff), Math.cos(phaseDiff));
+            phaseSum += wrappedDiff;
+            count++;
+          }
+        }
+
+        if (count > 0) {
+          const avgDiff = phaseSum / count;
+          this.phase += avgDiff * coupling;
+        }
+      }
+
+      draw() {
+        const glow = this.brightness * 15;
+        const size = 3 + this.brightness * 4;
+
+        ctx.shadowBlur = glow;
+        ctx.shadowColor = `hsla(${this.hue}, 100%, 60%, ${this.brightness})`;
+
+        ctx.fillStyle = `hsla(${this.hue}, 100%, 70%, ${this.brightness})`;
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, size, 0, Math.PI * 2);
+        ctx.fill();
+
+        if (this.brightness > 0.8) {
+          ctx.fillStyle = `hsla(${this.hue}, 100%, 90%, ${this.brightness * 0.5})`;
+          ctx.beginPath();
+          ctx.arc(this.x, this.y, size * 2, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+
+    function resize() {
+      width = canvas.width = window.innerWidth;
+      height = canvas.height = window.innerHeight;
+      initFireflies();
+    }
+
+    function initFireflies() {
+      fireflies = [];
+      for (let i = 0; i < fireflyCount; i++) {
+        fireflies.push(new Firefly());
+      }
+    }
+
+    function draw() {
+      ctx.fillStyle = 'rgba(10, 10, 10, 0.12)';
+      ctx.fillRect(0, 0, width, height);
+
+      for (const firefly of fireflies) {
+        firefly.sync(fireflies);
+      }
+
+      for (const firefly of fireflies) {
+        firefly.update();
+        firefly.draw();
+      }
+
+      ctx.shadowBlur = 0;
+      requestAnimationFrame(draw);
+    }
+
+    canvas.addEventListener('click', (e) => {
+      for (const firefly of fireflies) {
+        const dx = firefly.x - e.clientX;
+        const dy = firefly.y - e.clientY;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < 200) {
+          firefly.phase = Math.PI / 2;
+        }
+      }
+    });
+
+    window.addEventListener('resize', resize);
+    resize();
+    draw();
+  </script>
+</body>
+</html>

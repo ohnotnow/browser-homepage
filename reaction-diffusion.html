@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Reaction Diffusion</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background: #0a0a0a;
+      overflow: hidden;
+      height: 100vh;
+    }
+
+    canvas {
+      display: block;
+      border-radius: 20px;
+    }
+
+    .scanlines {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      background: repeating-linear-gradient(
+        0deg,
+        rgba(0, 0, 0, 0.15) 0px,
+        rgba(0, 0, 0, 0.15) 1px,
+        transparent 1px,
+        transparent 3px
+      );
+      z-index: 10;
+    }
+
+    .vignette {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      background: radial-gradient(
+        ellipse at center,
+        transparent 0%,
+        transparent 50%,
+        rgba(0, 0, 0, 0.4) 100%
+      );
+      z-index: 11;
+    }
+
+    .crt {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 12;
+      animation: flicker 0.15s infinite;
+      opacity: 0.03;
+      background: white;
+    }
+
+    @keyframes flicker {
+      0% { opacity: 0.003; }
+      50% { opacity: 0.008; }
+      100% { opacity: 0.003; }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <div class="scanlines"></div>
+  <div class="vignette"></div>
+  <div class="crt"></div>
+
+  <script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+
+    let width, height;
+    let gridA, gridB, nextA, nextB;
+    let imageData;
+    let params = {
+      feed: 0.055,
+      kill: 0.062,
+      da: 1.0,
+      db: 0.5,
+      dt: 1.0
+    };
+    let time = 0;
+
+    function resize() {
+      width = canvas.width = window.innerWidth;
+      height = canvas.height = window.innerHeight;
+      initGrid();
+    }
+
+    function initGrid() {
+      const size = width * height;
+      gridA = new Float32Array(size);
+      gridB = new Float32Array(size);
+      nextA = new Float32Array(size);
+      nextB = new Float32Array(size);
+      imageData = ctx.createImageData(width, height);
+
+      for (let i = 0; i < size; i++) {
+        gridA[i] = 1.0;
+        gridB[i] = 0.0;
+      }
+
+      seed();
+    }
+
+    function seed() {
+      const cx = Math.floor(width / 2);
+      const cy = Math.floor(height / 2);
+      const r = Math.floor(Math.min(width, height) * 0.08);
+
+      for (let y = cy - r; y < cy + r; y++) {
+        for (let x = cx - r; x < cx + r; x++) {
+          if (x >= 0 && x < width && y >= 0 && y < height) {
+            const idx = y * width + x;
+            gridB[idx] = 1.0;
+          }
+        }
+      }
+    }
+
+    function laplacian(idx, grid) {
+      let sum = 0;
+      const w = width;
+
+      sum += grid[idx] * -1;
+      sum += grid[idx - 1] * 0.2;
+      sum += grid[idx + 1] * 0.2;
+      sum += grid[idx - w] * 0.2;
+      sum += grid[idx + w] * 0.2;
+      sum += grid[idx - w - 1] * 0.05;
+      sum += grid[idx - w + 1] * 0.05;
+      sum += grid[idx + w - 1] * 0.05;
+      sum += grid[idx + w + 1] * 0.05;
+
+      return sum;
+    }
+
+    function update() {
+      for (let y = 1; y < height - 1; y++) {
+        for (let x = 1; x < width - 1; x++) {
+          const idx = y * width + x;
+          const a = gridA[idx];
+          const b = gridB[idx];
+          const lapA = laplacian(idx, gridA);
+          const lapB = laplacian(idx, gridB);
+
+          let newA = a + (params.da * lapA - a * b * b + params.feed * (1 - a)) * params.dt;
+          let newB = b + (params.db * lapB + a * b * b - (params.kill + params.feed) * b) * params.dt;
+
+          newA = Math.max(0, Math.min(1, newA));
+          newB = Math.max(0, Math.min(1, newB));
+
+          nextA[idx] = newA;
+          nextB[idx] = newB;
+        }
+      }
+
+      [gridA, nextA] = [nextA, gridA];
+      [gridB, nextB] = [nextB, gridB];
+    }
+
+    function draw() {
+      const data = imageData.data;
+
+      for (let i = 0; i < gridA.length; i++) {
+        const a = gridA[i];
+        const b = gridB[i];
+        const c = Math.floor((a - b) * 255);
+        const val = Math.max(0, Math.min(255, c));
+
+        const idx = i * 4;
+        data[idx] = val * 0.2;
+        data[idx + 1] = val * 0.5;
+        data[idx + 2] = val * 0.8;
+        data[idx + 3] = 255;
+      }
+
+      ctx.putImageData(imageData, 0, 0);
+
+      for (let i = 0; i < 8; i++) {
+        update();
+      }
+
+      time++;
+      requestAnimationFrame(draw);
+    }
+
+    canvas.addEventListener('click', (e) => {
+      const cx = e.clientX;
+      const cy = e.clientY;
+      const r = 15;
+
+      for (let y = cy - r; y < cy + r; y++) {
+        for (let x = cx - r; x < cx + r; x++) {
+          if (x >= 0 && x < width && y >= 0 && y < height) {
+            const idx = y * width + x;
+            if (Math.random() < 0.5) {
+              gridB[idx] = 1.0;
+            }
+          }
+        }
+      }
+    });
+
+    window.addEventListener('resize', resize);
+    resize();
+    draw();
+  </script>
+</body>
+</html>
