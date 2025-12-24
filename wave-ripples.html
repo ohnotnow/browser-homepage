@@ -207,9 +207,19 @@
       }
     }
 
+    function autoSpawnWave() {
+      const x = Math.random() * width;
+      const y = Math.random() * height;
+      spawnWave(x, y);
+    }
+
     function draw() {
       ctx.fillStyle = 'rgba(10, 10, 10, 0.08)';
       ctx.fillRect(0, 0, width, height);
+
+      if (time % 150 === 0 && waves.length < 3) {
+        autoSpawnWave();
+      }
 
       for (let i = waves.length - 1; i >= 0; i--) {
         waves[i].update();
@@ -241,6 +251,8 @@
     });
 
     window.addEventListener('resize', resize);
+    autoSpawnWave();
+    autoSpawnWave();
     resize();
     draw();
   </script>
