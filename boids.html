@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Boids</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background: #0a0a0a;
+      overflow: hidden;
+      height: 100vh;
+    }
+
+    canvas {
+      display: block;
+      border-radius: 20px;
+    }
+
+    /* Scanline overlay */
+    .scanlines {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      background: repeating-linear-gradient(
+        0deg,
+        rgba(0, 0, 0, 0.15) 0px,
+        rgba(0, 0, 0, 0.15) 1px,
+        transparent 1px,
+        transparent 3px
+      );
+      z-index: 10;
+    }
+
+    /* Vignette effect */
+    .vignette {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      background: radial-gradient(
+        ellipse at center,
+        transparent 0%,
+        transparent 50%,
+        rgba(0, 0, 0, 0.4) 100%
+      );
+      z-index: 11;
+    }
+
+    /* Subtle screen flicker */
+    .crt {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 12;
+      animation: flicker 0.15s infinite;
+      opacity: 0.03;
+      background: white;
+    }
+
+    @keyframes flicker {
+      0% { opacity: 0.003; }
+      50% { opacity: 0.008; }
+      100% { opacity: 0.003; }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <div class="scanlines"></div>
+  <div class="vignette"></div>
+  <div class="crt"></div>
+
+  <script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+
+    let width, height;
+    let boids = [];
+    const boidCount = 120;
+
+    // Disturbance from mouse clicks
+    let disturbance = null;
+
+    // Boid behavior parameters (tuned for ambient feel)
+    const params = {
+      maxSpeed: 2,
+      maxForce: 0.03,
+      separationDist: 35,
+      alignmentDist: 80,
+      cohesionDist: 100,
+      separationWeight: 1.5,
+      alignmentWeight: 1.0,
+      cohesionWeight: 1.0,
+      edgeMargin: 100,
+      edgeForce: 0.5
+    };
+
+    class Vector {
+      constructor(x = 0, y = 0) {
+        this.x = x;
+        this.y = y;
+      }
+
+      add(v) {
+        this.x += v.x;
+        this.y += v.y;
+        return this;
+      }
+
+      sub(v) {
+        this.x -= v.x;
+        this.y -= v.y;
+        return this;
+      }
+
+      mult(n) {
+        this.x *= n;
+        this.y *= n;
+        return this;
+      }
+
+      div(n) {
+        if (n !== 0) {
+          this.x /= n;
+          this.y /= n;
+        }
+        return this;
+      }
+
+      mag() {
+        return Math.sqrt(this.x * this.x + this.y * this.y);
+      }
+
+      normalize() {
+        const m = this.mag();
+        if (m > 0) this.div(m);
+        return this;
+      }
+
+      limit(max) {
+        if (this.mag() > max) {
+          this.normalize().mult(max);
+        }
+        return this;
+      }
+
+      copy() {
+        return new Vector(this.x, this.y);
+      }
+
+      static sub(v1, v2) {
+        return new Vector(v1.x - v2.x, v1.y - v2.y);
+      }
+
+      static dist(v1, v2) {
+        return Math.sqrt((v1.x - v2.x) ** 2 + (v1.y - v2.y) ** 2);
+      }
+    }
+
+    class Boid {
+      constructor() {
+        this.position = new Vector(
+          Math.random() * width,
+          Math.random() * height
+        );
+        this.velocity = new Vector(
+          Math.random() * 2 - 1,
+          Math.random() * 2 - 1
+        );
+        this.velocity.normalize().mult(Math.random() * params.maxSpeed);
+        this.acceleration = new Vector();
+        this.history = [];
+        this.maxHistory = 8;
+        // Each boid has a slight hue offset for variety
+        this.hueOffset = Math.random() * 20 - 10;
+      }
+
+      // Color based on direction (and a slow time drift)
+      getHue(time) {
+        const angle = Math.atan2(this.velocity.y, this.velocity.x);
+        // Map angle (-PI to PI) to hue (0 to 360)
+        const directionHue = ((angle + Math.PI) / (Math.PI * 2)) * 360;
+        // Add slow time drift so colors gradually shift
+        const timeDrift = (time * 0.01) % 360;
+        return (directionHue + timeDrift + this.hueOffset) % 360;
+      }
+
+      // Separation: steer away from nearby flockmates
+      separate(boids) {
+        const steer = new Vector();
+        let count = 0;
+
+        for (const other of boids) {
+          const d = Vector.dist(this.position, other.position);
+          if (d > 0 && d < params.separationDist) {
+            const diff = Vector.sub(this.position, other.position);
+            diff.normalize().div(d); // Weight by distance
+            steer.add(diff);
+            count++;
+          }
+        }
+
+        if (count > 0) {
+          steer.div(count);
+          steer.normalize().mult(params.maxSpeed);
+          steer.sub(this.velocity);
+          steer.limit(params.maxForce);
+        }
+
+        return steer;
+      }
+
+      // Alignment: steer towards average heading of nearby flockmates
+      align(boids) {
+        const sum = new Vector();
+        let count = 0;
+
+        for (const other of boids) {
+          const d = Vector.dist(this.position, other.position);
+          if (d > 0 && d < params.alignmentDist) {
+            sum.add(other.velocity);
+            count++;
+          }
+        }
+
+        if (count > 0) {
+          sum.div(count);
+          sum.normalize().mult(params.maxSpeed);
+          const steer = Vector.sub(sum, this.velocity);
+          steer.limit(params.maxForce);
+          return steer;
+        }
+
+        return new Vector();
+      }
+
+      // Cohesion: steer towards average position of nearby flockmates
+      cohere(boids) {
+        const sum = new Vector();
+        let count = 0;
+
+        for (const other of boids) {
+          const d = Vector.dist(this.position, other.position);
+          if (d > 0 && d < params.cohesionDist) {
+            sum.add(other.position);
+            count++;
+          }
+        }
+
+        if (count > 0) {
+          sum.div(count);
+          return this.seek(sum);
+        }
+
+        return new Vector();
+      }
+
+      // Seek a target position
+      seek(target) {
+        const desired = Vector.sub(target, this.position);
+        desired.normalize().mult(params.maxSpeed);
+        const steer = Vector.sub(desired, this.velocity);
+        steer.limit(params.maxForce);
+        return steer;
+      }
+
+      // Flee from a disturbance point
+      flee(target, radius, strength) {
+        const d = Vector.dist(this.position, target);
+        if (d < radius) {
+          const desired = Vector.sub(this.position, target);
+          // Stronger force when closer
+          const force = (1 - d / radius) * strength;
+          desired.normalize().mult(params.maxSpeed * force);
+          const steer = Vector.sub(desired, this.velocity);
+          steer.limit(params.maxForce * 3); // Allow stronger steering when startled
+          return steer;
+        }
+        return new Vector();
+      }
+
+      // Soft edge avoidance (steer away from edges)
+      avoidEdges() {
+        const steer = new Vector();
+        const margin = params.edgeMargin;
+
+        if (this.position.x < margin) {
+          steer.x = (margin - this.position.x) / margin;
+        } else if (this.position.x > width - margin) {
+          steer.x = -(this.position.x - (width - margin)) / margin;
+        }
+
+        if (this.position.y < margin) {
+          steer.y = (margin - this.position.y) / margin;
+        } else if (this.position.y > height - margin) {
+          steer.y = -(this.position.y - (height - margin)) / margin;
+        }
+
+        steer.mult(params.edgeForce);
+        return steer;
+      }
+
+      flock(boids) {
+        const separation = this.separate(boids).mult(params.separationWeight);
+        const alignment = this.align(boids).mult(params.alignmentWeight);
+        const cohesion = this.cohere(boids).mult(params.cohesionWeight);
+        const edges = this.avoidEdges();
+
+        this.acceleration.add(separation);
+        this.acceleration.add(alignment);
+        this.acceleration.add(cohesion);
+        this.acceleration.add(edges);
+
+        // Flee from disturbance if active
+        if (disturbance) {
+          const flee = this.flee(disturbance.position, disturbance.radius, disturbance.strength);
+          this.acceleration.add(flee);
+        }
+      }
+
+      update() {
+        // Store history for trails
+        this.history.push(this.position.copy());
+        if (this.history.length > this.maxHistory) {
+          this.history.shift();
+        }
+
+        this.velocity.add(this.acceleration);
+        this.velocity.limit(params.maxSpeed);
+        this.position.add(this.velocity);
+        this.acceleration.mult(0);
+
+        // Wrap around edges (fallback if edge avoidance isn't enough)
+        if (this.position.x < -20) this.position.x = width + 20;
+        if (this.position.x > width + 20) this.position.x = -20;
+        if (this.position.y < -20) this.position.y = height + 20;
+        if (this.position.y > height + 20) this.position.y = -20;
+      }
+
+      draw(time) {
+        const angle = Math.atan2(this.velocity.y, this.velocity.x);
+        const speed = this.velocity.mag();
+        const alpha = 0.5 + (speed / params.maxSpeed) * 0.3;
+        const hue = this.getHue(time);
+
+        // Draw trail
+        ctx.shadowBlur = 4;
+        ctx.shadowColor = `hsla(${hue}, 80%, 60%, 0.3)`;
+
+        for (let i = 0; i < this.history.length; i++) {
+          const pos = this.history[i];
+          const trailAlpha = (i / this.history.length) * 0.3;
+          ctx.fillStyle = `hsla(${hue}, 70%, 50%, ${trailAlpha})`;
+          const size = (i / this.history.length) * 2;
+          ctx.beginPath();
+          ctx.arc(pos.x, pos.y, size, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        // Draw boid as small triangle
+        ctx.save();
+        ctx.translate(this.position.x, this.position.y);
+        ctx.rotate(angle);
+
+        ctx.shadowBlur = 8;
+        ctx.shadowColor = `hsla(${hue}, 90%, 60%, 0.6)`;
+
+        ctx.fillStyle = `hsla(${hue}, 80%, 55%, ${alpha})`;
+        ctx.beginPath();
+        ctx.moveTo(6, 0);
+        ctx.lineTo(-4, 3);
+        ctx.lineTo(-4, -3);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.restore();
+        ctx.shadowBlur = 0;
+      }
+    }
+
+    function resize() {
+      width = canvas.width = window.innerWidth;
+      height = canvas.height = window.innerHeight;
+
+      // Reinitialize boids
+      boids = [];
+      for (let i = 0; i < boidCount; i++) {
+        boids.push(new Boid());
+      }
+    }
+
+    function draw(time) {
+      // Phosphor persistence
+      ctx.fillStyle = 'rgba(10, 10, 10, 0.08)';
+      ctx.fillRect(0, 0, width, height);
+
+      // Decay disturbance over time
+      if (disturbance) {
+        disturbance.strength *= disturbance.decay;
+        if (disturbance.strength < 0.01) {
+          disturbance = null;
+        }
+      }
+
+      // Update and draw boids
+      for (const boid of boids) {
+        boid.flock(boids);
+      }
+
+      for (const boid of boids) {
+        boid.update();
+        boid.draw(time);
+      }
+
+      requestAnimationFrame(draw);
+    }
+
+    window.addEventListener('resize', resize);
+
+    // Click to create a disturbance
+    canvas.addEventListener('click', (e) => {
+      disturbance = {
+        position: new Vector(e.clientX, e.clientY),
+        radius: 200,
+        strength: 3,
+        decay: 0.97
+      };
+    });
+
+    resize();
+    draw();
+  </script>
+</body>
+</html>
