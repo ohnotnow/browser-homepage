@@ -360,9 +360,11 @@
 
           if (u_pass < 0.5) {
             float trail = treeMask(uv + offset);
-            float shift = 1.25 + 0.75 * sin(u_time * 0.25);
-            vec2 prevUv = (fragCoord.xy + vec2(shift, 0.0)) / u_resolution.xy;
-            float prev = texture2D(u_trail, prevUv).r;
+            float shift = 6.0 + 2.0 * sin(u_time * 0.25);
+            vec2 baseUv = (fragCoord.xy + vec2(shift, 0.0)) / u_resolution.xy;
+            float prev = texture2D(u_trail, baseUv).r;
+            float prevBlur = texture2D(u_trail, baseUv + vec2(1.0 / u_resolution.x, 0.0)).r;
+            prev = 0.6 * prev + 0.4 * prevBlur;
             float nextTrail = max(trail, prev * u_decay);
             fragColor = vec4(nextTrail, 0.0, 0.0, 1.0);
             return;
