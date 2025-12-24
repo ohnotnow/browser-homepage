@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>L-System Garden</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background: #0a0a0a;
+      overflow: hidden;
+      height: 100vh;
+    }
+
+    canvas {
+      display: block;
+      border-radius: 20px;
+    }
+
+    /* Scanline overlay */
+    .scanlines {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      background: repeating-linear-gradient(
+        0deg,
+        rgba(0, 0, 0, 0.15) 0px,
+        rgba(0, 0, 0, 0.15) 1px,
+        transparent 1px,
+        transparent 3px
+      );
+      z-index: 10;
+    }
+
+    /* Vignette effect */
+    .vignette {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      background: radial-gradient(
+        ellipse at center,
+        transparent 0%,
+        transparent 50%,
+        rgba(0, 0, 0, 0.4) 100%
+      );
+      z-index: 11;
+    }
+
+    /* Subtle screen flicker */
+    .crt {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 12;
+      animation: flicker 0.15s infinite;
+      opacity: 0.03;
+      background: white;
+    }
+
+    @keyframes flicker {
+      0% { opacity: 0.02; }
+      50% { opacity: 0.04; }
+      100% { opacity: 0.02; }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <div class="scanlines"></div>
+  <div class="vignette"></div>
+  <div class="crt"></div>
+
+  <script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+
+    let width, height;
+
+    // L-System definitions
+    const systems = [
+      {
+        // Bush/shrub
+        axiom: 'F',
+        rules: { 'F': 'FF+[+F-F-F]-[-F+F+F]' },
+        angle: 22.5,
+        iterations: 4,
+        lengthFactor: 0.5
+      },
+      {
+        // Fractal plant
+        axiom: 'X',
+        rules: { 'X': 'F+[[X]-X]-F[-FX]+X', 'F': 'FF' },
+        angle: 25,
+        iterations: 5,
+        lengthFactor: 0.5
+      },
+      {
+        // Seaweed-like
+        axiom: 'F',
+        rules: { 'F': 'F[+F]F[-F]F' },
+        angle: 25.7,
+        iterations: 4,
+        lengthFactor: 0.45
+      },
+      {
+        // Branching tree
+        axiom: 'X',
+        rules: { 'X': 'F[+X][-X]FX', 'F': 'FF' },
+        angle: 30,
+        iterations: 5,
+        lengthFactor: 0.5
+      }
+    ];
+
+    class Plant {
+      constructor(x, groundY) {
+        this.x = x;
+        this.groundY = groundY;
+        this.system = systems[Math.floor(Math.random() * systems.length)];
+        this.baseLength = Math.random() * 3 + 2;
+        this.swayOffset = Math.random() * Math.PI * 2;
+        this.swaySpeed = Math.random() * 0.0005 + 0.0003;
+        this.swayAmount = Math.random() * 3 + 2;
+        this.birth = Date.now();
+        this.growDuration = Math.random() * 15000 + 10000;
+        this.liveDuration = Math.random() * 30000 + 40000;
+        this.fadeDuration = 10000;
+        this.string = this.generate();
+        this.hue = Math.random() * 60 + 90; // Green to yellow-green range
+      }
+
+      generate() {
+        let str = this.system.axiom;
+        for (let i = 0; i < this.system.iterations; i++) {
+          let next = '';
+          for (const char of str) {
+            next += this.system.rules[char] || char;
+          }
+          str = next;
+        }
+        return str;
+      }
+
+      getAge() {
+        return Date.now() - this.birth;
+      }
+
+      getGrowth() {
+        const age = this.getAge();
+        if (age < this.growDuration) {
+          // Ease out growth
+          const t = age / this.growDuration;
+          return t * t * (3 - 2 * t);
+        }
+        return 1;
+      }
+
+      getAlpha() {
+        const age = this.getAge();
+        const totalLife = this.growDuration + this.liveDuration + this.fadeDuration;
+
+        if (age < this.growDuration) {
+          return age / this.growDuration;
+        } else if (age < this.growDuration + this.liveDuration) {
+          return 1;
+        } else if (age < totalLife) {
+          return 1 - (age - this.growDuration - this.liveDuration) / this.fadeDuration;
+        }
+        return 0;
+      }
+
+      isDead() {
+        return this.getAge() > this.growDuration + this.liveDuration + this.fadeDuration;
+      }
+
+      draw(time) {
+        const growth = this.getGrowth();
+        const alpha = this.getAlpha();
+
+        if (alpha <= 0) return;
+
+        const sway = Math.sin(time * this.swaySpeed + this.swayOffset) * this.swayAmount;
+        const length = this.baseLength * growth;
+        const angle = this.system.angle;
+
+        const stack = [];
+        let currentAngle = -90; // Start pointing up
+        let x = this.x;
+        let y = this.groundY;
+        let depth = 0;
+        let maxDepth = 0;
+
+        // Count max depth for color gradient
+        for (const char of this.string) {
+          if (char === '[') maxDepth = Math.max(maxDepth, ++depth);
+          if (char === ']') depth--;
+        }
+
+        depth = 0;
+        let charIndex = 0;
+        const totalChars = this.string.replace(/[^F]/g, '').length;
+        const charsToRender = Math.floor(totalChars * growth);
+        let renderedChars = 0;
+
+        ctx.lineCap = 'round';
+
+        for (const char of this.string) {
+          if (renderedChars >= charsToRender) break;
+
+          // Add depth-based sway (more sway at branch tips)
+          const depthSway = sway * (depth / Math.max(maxDepth, 1)) * 0.3;
+
+          switch (char) {
+            case 'F':
+              const len = length * Math.pow(this.system.lengthFactor, depth);
+              const rad = (currentAngle + depthSway) * Math.PI / 180;
+              const newX = x + Math.cos(rad) * len;
+              const newY = y + Math.sin(rad) * len;
+
+              // Color gradient from trunk to tips
+              const depthRatio = depth / Math.max(maxDepth, 1);
+              const brightness = 40 + depthRatio * 30;
+              const saturation = 50 + depthRatio * 30;
+
+              ctx.strokeStyle = `hsla(${this.hue}, ${saturation}%, ${brightness}%, ${alpha * 0.7})`;
+              ctx.lineWidth = Math.max(0.5, (1 - depthRatio) * 2);
+
+              // Glow effect
+              ctx.shadowBlur = 6;
+              ctx.shadowColor = `hsla(${this.hue}, 80%, 50%, ${alpha * 0.4})`;
+
+              ctx.beginPath();
+              ctx.moveTo(x, y);
+              ctx.lineTo(newX, newY);
+              ctx.stroke();
+
+              x = newX;
+              y = newY;
+              renderedChars++;
+              break;
+
+            case '+':
+              currentAngle += angle;
+              break;
+
+            case '-':
+              currentAngle -= angle;
+              break;
+
+            case '[':
+              stack.push({ x, y, angle: currentAngle, depth });
+              depth++;
+              break;
+
+            case ']':
+              const state = stack.pop();
+              if (state) {
+                x = state.x;
+                y = state.y;
+                currentAngle = state.angle;
+                depth = state.depth;
+              }
+              break;
+          }
+        }
+
+        ctx.shadowBlur = 0;
+      }
+    }
+
+    let plants = [];
+    let lastSpawn = 0;
+    const spawnInterval = 4000; // New plant every 4 seconds
+    const maxPlants = 12;
+
+    function resize() {
+      width = canvas.width = window.innerWidth;
+      height = canvas.height = window.innerHeight;
+    }
+
+    function spawnPlant() {
+      // Random position along the bottom third
+      const x = Math.random() * width;
+      const groundY = height - Math.random() * (height * 0.15) - 20;
+      plants.push(new Plant(x, groundY));
+    }
+
+    function draw(time) {
+      // Phosphor persistence
+      ctx.fillStyle = 'rgba(10, 10, 10, 0.03)';
+      ctx.fillRect(0, 0, width, height);
+
+      // Spawn new plants
+      if (time - lastSpawn > spawnInterval && plants.length < maxPlants) {
+        spawnPlant();
+        lastSpawn = time;
+      }
+
+      // Update and draw plants
+      plants = plants.filter(plant => !plant.isDead());
+
+      for (const plant of plants) {
+        plant.draw(time);
+      }
+
+      requestAnimationFrame(draw);
+    }
+
+    window.addEventListener('resize', resize);
+    resize();
+
+    // Initial plants
+    for (let i = 0; i < 5; i++) {
+      spawnPlant();
+      plants[i].birth -= Math.random() * 20000; // Stagger their ages
+    }
+
+    draw(0);
+  </script>
+</body>
+</html>

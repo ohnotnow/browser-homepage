@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Flow Field</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background: #0a0a0a;
+      overflow: hidden;
+      height: 100vh;
+    }
+
+    canvas {
+      display: block;
+      /* CRT curvature effect */
+      border-radius: 20px;
+    }
+
+    /* Scanline overlay */
+    .scanlines {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      background: repeating-linear-gradient(
+        0deg,
+        rgba(0, 0, 0, 0.15) 0px,
+        rgba(0, 0, 0, 0.15) 1px,
+        transparent 1px,
+        transparent 3px
+      );
+      z-index: 10;
+    }
+
+    /* Vignette effect */
+    .vignette {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      background: radial-gradient(
+        ellipse at center,
+        transparent 0%,
+        transparent 50%,
+        rgba(0, 0, 0, 0.4) 100%
+      );
+      z-index: 11;
+    }
+
+    /* Subtle screen flicker */
+    .crt {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      z-index: 12;
+      animation: flicker 0.15s infinite;
+      opacity: 0.03;
+      background: white;
+    }
+
+    @keyframes flicker {
+      0% { opacity: 0.02; }
+      50% { opacity: 0.04; }
+      100% { opacity: 0.02; }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <div class="scanlines"></div>
+  <div class="vignette"></div>
+  <div class="crt"></div>
+
+  <script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+
+    let width, height;
+    let particles = [];
+    let flowField = [];
+    let cols, rows;
+    const scale = 20;
+    const particleCount = 1500;
+    let zOffset = 0;
+
+    // Perlin noise implementation
+    class PerlinNoise {
+      constructor() {
+        this.permutation = [];
+        for (let i = 0; i < 256; i++) {
+          this.permutation[i] = Math.floor(Math.random() * 256);
+        }
+        this.permutation = [...this.permutation, ...this.permutation];
+      }
+
+      fade(t) {
+        return t * t * t * (t * (t * 6 - 15) + 10);
+      }
+
+      lerp(a, b, t) {
+        return a + t * (b - a);
+      }
+
+      grad(hash, x, y, z) {
+        const h = hash & 15;
+        const u = h < 8 ? x : y;
+        const v = h < 4 ? y : h === 12 || h === 14 ? x : z;
+        return ((h & 1) === 0 ? u : -u) + ((h & 2) === 0 ? v : -v);
+      }
+
+      noise(x, y, z) {
+        const X = Math.floor(x) & 255;
+        const Y = Math.floor(y) & 255;
+        const Z = Math.floor(z) & 255;
+
+        x -= Math.floor(x);
+        y -= Math.floor(y);
+        z -= Math.floor(z);
+
+        const u = this.fade(x);
+        const v = this.fade(y);
+        const w = this.fade(z);
+
+        const p = this.permutation;
+        const A = p[X] + Y, AA = p[A] + Z, AB = p[A + 1] + Z;
+        const B = p[X + 1] + Y, BA = p[B] + Z, BB = p[B + 1] + Z;
+
+        return this.lerp(
+          this.lerp(
+            this.lerp(this.grad(p[AA], x, y, z), this.grad(p[BA], x - 1, y, z), u),
+            this.lerp(this.grad(p[AB], x, y - 1, z), this.grad(p[BB], x - 1, y - 1, z), u),
+            v
+          ),
+          this.lerp(
+            this.lerp(this.grad(p[AA + 1], x, y, z - 1), this.grad(p[BA + 1], x - 1, y, z - 1), u),
+            this.lerp(this.grad(p[AB + 1], x, y - 1, z - 1), this.grad(p[BB + 1], x - 1, y - 1, z - 1), u),
+            v
+          ),
+          w
+        );
+      }
+    }
+
+    const perlin = new PerlinNoise();
+
+    class Particle {
+      constructor() {
+        this.reset();
+        this.life = Math.random() * 200 + 100;
+        this.maxLife = this.life;
+      }
+
+      reset() {
+        this.x = Math.random() * width;
+        this.y = Math.random() * height;
+        this.prevX = this.x;
+        this.prevY = this.y;
+        this.speed = Math.random() * 0.5 + 0.3;
+        this.life = Math.random() * 200 + 100;
+        this.maxLife = this.life;
+      }
+
+      update() {
+        const col = Math.floor(this.x / scale);
+        const row = Math.floor(this.y / scale);
+        const index = col + row * cols;
+
+        if (flowField[index]) {
+          const angle = flowField[index];
+          this.prevX = this.x;
+          this.prevY = this.y;
+          this.x += Math.cos(angle) * this.speed;
+          this.y += Math.sin(angle) * this.speed;
+        }
+
+        this.life--;
+
+        if (this.x < 0 || this.x > width || this.y < 0 || this.y > height || this.life <= 0) {
+          this.reset();
+        }
+      }
+
+      draw() {
+        const lifeRatio = this.life / this.maxLife;
+        const alpha = Math.sin(lifeRatio * Math.PI) * 0.6;
+
+        // Phosphor green with glow
+        ctx.strokeStyle = `rgba(120, 220, 150, ${alpha})`;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(this.prevX, this.prevY);
+        ctx.lineTo(this.x, this.y);
+        ctx.stroke();
+      }
+    }
+
+    function resize() {
+      width = canvas.width = window.innerWidth;
+      height = canvas.height = window.innerHeight;
+      cols = Math.ceil(width / scale);
+      rows = Math.ceil(height / scale);
+
+      // Reinitialize particles
+      particles = [];
+      for (let i = 0; i < particleCount; i++) {
+        particles.push(new Particle());
+      }
+    }
+
+    function updateFlowField() {
+      flowField = [];
+      for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+          const noise = perlin.noise(x * 0.05, y * 0.05, zOffset);
+          const angle = noise * Math.PI * 4;
+          flowField[x + y * cols] = angle;
+        }
+      }
+      zOffset += 0.002; // Very slow evolution
+    }
+
+    function draw() {
+      // Phosphor persistence - semi-transparent black overlay
+      ctx.fillStyle = 'rgba(10, 10, 10, 0.05)';
+      ctx.fillRect(0, 0, width, height);
+
+      // Add subtle glow effect
+      ctx.shadowBlur = 8;
+      ctx.shadowColor = 'rgba(120, 220, 150, 0.5)';
+
+      updateFlowField();
+
+      for (const particle of particles) {
+        particle.update();
+        particle.draw();
+      }
+
+      ctx.shadowBlur = 0;
+
+      requestAnimationFrame(draw);
+    }
+
+    window.addEventListener('resize', resize);
+    resize();
+    draw();
+  </script>
+</body>
+</html>
